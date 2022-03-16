@@ -10,6 +10,14 @@ const cors = require("cors");
 require("dotenv").config();
 const path = require("path");
 
+// Import firebase admin.
+const { initializeApp, cert } = require("firebase-admin/app");
+const serviceAccount = require("./account_access_admin.json");
+initializeApp({
+  credential: cert(serviceAccount),
+});
+const { getFirestore } = require("firebase-admin/firestore");
+const db = getFirestore();
 const serverUrl =
   process.env.NODE_ENV === "production"
     ? process.env.PRODUCTION_SERVER_URL
@@ -34,7 +42,7 @@ const swaggerOptions = {
       },
       servers: [
         {
-          url: "",
+          url: serverUrl,
         },
       ],
     },
@@ -130,11 +138,13 @@ app.use(express.static(path.join(__dirname, "public")));
 app.get("/", async (req, res) => {
   var data = [];
   try {
-    await fetch("https://psc-notices.herokuapp.com/data")
-      .then((res) => res.json())
-      .then((response) => {
-        data = response;
-      });
+    const snapshot = await db
+      .collection("loksewa-notices")
+      .orderBy("id", "asc")
+      .get();
+    snapshot.forEach((doc) => {
+      data.push(doc.data());
+    });
     res.render("index", {
       title: "लोक सेवा आयोग",
       noticeTitle: "लोक सेवा आयोगको वेभसाईटमा प्रकाशित बिज्ञापनहरुको सुची",
@@ -152,6 +162,37 @@ app.get("/", async (req, res) => {
   }
 
   // res.render("index", { title: "Test App",data });
+});
+
+let i = 1;
+app.get("/update-data", async (req, res) => {
+  try {
+    const snapshot = await db.collection("loksewa-notices").get();
+    let counter=1;
+    snapshot.forEach(async (doc) => {
+      // Delete this document.
+      await db.collection("loksewa-notices").doc(doc.id).delete();
+      console.log(counter);
+      counter++
+    });
+    const loksewaData = await fetch("https://psc-notices.herokuapp.com/data");
+    await loksewaData.json().then((data) => {
+      data.forEach((notice) => {
+        db.collection("loksewa-notices").add({ id: i, ...notice });
+        i++;
+      });
+    });
+    res.status(StatusCode.success).send("Done");
+  } catch (error) {
+    res
+      .status(StatusCode.badRequest)
+      .header({ "Content-Type": "application/json" })
+      .send({
+        message: "Something went wrong. Please check and try again.",
+        errorMessage: error.message,
+        status: StatusCode.badRequest,
+      });
+  }
 });
 // Listen on environment's PORT variable or default to 3000.
 const port = process.env.PORT || 3000;
